@@ -22,5 +22,25 @@ func now()string{return time.Now().UTC().Format(time.RFC3339)}
 func(d *DB)Create(e *Check)error{e.ID=genID();e.CreatedAt=now();_,err:=d.db.Exec(`INSERT INTO checks(id,name,source,rule,column_name,severity,last_result,fail_count,last_run_at,created_at)VALUES(?,?,?,?,?,?,?,?,?,?)`,e.ID,e.Name,e.Source,e.Rule,e.Column,e.Severity,e.LastResult,e.FailCount,e.LastRunAt,e.CreatedAt);return err}
 func(d *DB)Get(id string)*Check{var e Check;if d.db.QueryRow(`SELECT id,name,source,rule,column_name,severity,last_result,fail_count,last_run_at,created_at FROM checks WHERE id=?`,id).Scan(&e.ID,&e.Name,&e.Source,&e.Rule,&e.Column,&e.Severity,&e.LastResult,&e.FailCount,&e.LastRunAt,&e.CreatedAt)!=nil{return nil};return &e}
 func(d *DB)List()[]Check{rows,_:=d.db.Query(`SELECT id,name,source,rule,column_name,severity,last_result,fail_count,last_run_at,created_at FROM checks ORDER BY created_at DESC`);if rows==nil{return nil};defer rows.Close();var o []Check;for rows.Next(){var e Check;rows.Scan(&e.ID,&e.Name,&e.Source,&e.Rule,&e.Column,&e.Severity,&e.LastResult,&e.FailCount,&e.LastRunAt,&e.CreatedAt);o=append(o,e)};return o}
+func(d *DB)Update(e *Check)error{_,err:=d.db.Exec(`UPDATE checks SET name=?,source=?,rule=?,column_name=?,severity=?,last_result=?,fail_count=?,last_run_at=? WHERE id=?`,e.Name,e.Source,e.Rule,e.Column,e.Severity,e.LastResult,e.FailCount,e.LastRunAt,e.ID);return err}
 func(d *DB)Delete(id string)error{_,err:=d.db.Exec(`DELETE FROM checks WHERE id=?`,id);return err}
 func(d *DB)Count()int{var n int;d.db.QueryRow(`SELECT COUNT(*) FROM checks`).Scan(&n);return n}
+
+func(d *DB)Search(q string, filters map[string]string)[]Check{
+    where:="1=1"
+    args:=[]any{}
+    if q!=""{
+        where+=" AND (name LIKE ?)"
+        args=append(args,"%"+q+"%");
+    }
+    if v,ok:=filters["source"];ok&&v!=""{where+=" AND source=?";args=append(args,v)}
+    if v,ok:=filters["severity"];ok&&v!=""{where+=" AND severity=?";args=append(args,v)}
+    rows,_:=d.db.Query(`SELECT id,name,source,rule,column_name,severity,last_result,fail_count,last_run_at,created_at FROM checks WHERE `+where+` ORDER BY created_at DESC`,args...)
+    if rows==nil{return nil};defer rows.Close()
+    var o []Check;for rows.Next(){var e Check;rows.Scan(&e.ID,&e.Name,&e.Source,&e.Rule,&e.Column,&e.Severity,&e.LastResult,&e.FailCount,&e.LastRunAt,&e.CreatedAt);o=append(o,e)};return o
+}
+
+func(d *DB)Stats()map[string]any{
+    m:=map[string]any{"total":d.Count()}
+    return m
+}
