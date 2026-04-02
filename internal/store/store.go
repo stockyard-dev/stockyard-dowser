@@ -1,13 +1,23 @@
 package store
-import("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
-type DB struct{*sql.DB}
-type Expectation struct{ID int64 `json:"id"`;Name string `json:"name"`;Dataset string `json:"dataset"`;Column string `json:"column"`;Rule string `json:"rule"`;Threshold string `json:"threshold"`;LastStatus string `json:"last_status"`;LastRun *string `json:"last_run"`;CreatedAt time.Time `json:"created_at"`}
-type CheckResult struct{ID int64 `json:"id"`;ExpectationID int64 `json:"expectation_id"`;Passed bool `json:"passed"`;ActualValue string `json:"actual_value"`;Message string `json:"message"`;RanAt time.Time `json:"ran_at"`}
-func Open(d string)(*DB,error){os.MkdirAll(d,0755);dsn:=filepath.Join(d,"dowser.db")+"?_journal_mode=WAL&_busy_timeout=5000";db,err:=sql.Open("sqlite",dsn);if err!=nil{return nil,fmt.Errorf("open: %w",err)};db.SetMaxOpenConns(1);migrate(db);return &DB{db},nil}
-func migrate(db *sql.DB){db.Exec(`CREATE TABLE IF NOT EXISTS expectations(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,dataset TEXT NOT NULL,column_name TEXT DEFAULT '',rule TEXT NOT NULL,threshold TEXT DEFAULT '',last_status TEXT DEFAULT '',last_run TEXT,created_at DATETIME DEFAULT CURRENT_TIMESTAMP);CREATE TABLE IF NOT EXISTS check_results(id INTEGER PRIMARY KEY AUTOINCREMENT,expectation_id INTEGER NOT NULL,passed INTEGER NOT NULL,actual_value TEXT DEFAULT '',message TEXT DEFAULT '',ran_at DATETIME DEFAULT CURRENT_TIMESTAMP)`)}
-func(db *DB)Create(e *Expectation)error{res,err:=db.Exec(`INSERT INTO expectations(name,dataset,column_name,rule,threshold)VALUES(?,?,?,?,?)`,e.Name,e.Dataset,e.Column,e.Rule,e.Threshold);if err!=nil{return err};e.ID,_=res.LastInsertId();return nil}
-func(db *DB)List()([]Expectation,error){rows,_:=db.Query(`SELECT id,name,dataset,column_name,rule,threshold,last_status,last_run,created_at FROM expectations ORDER BY dataset,name`);defer rows.Close();var out[]Expectation;for rows.Next(){var e Expectation;rows.Scan(&e.ID,&e.Name,&e.Dataset,&e.Column,&e.Rule,&e.Threshold,&e.LastStatus,&e.LastRun,&e.CreatedAt);out=append(out,e)};return out,nil}
-func(db *DB)RecordCheck(c *CheckResult){p:=0;if c.Passed{p=1};status:="pass";if !c.Passed{status="fail"};db.Exec(`INSERT INTO check_results(expectation_id,passed,actual_value,message)VALUES(?,?,?,?)`,c.ExpectationID,p,c.ActualValue,c.Message);db.Exec(`UPDATE expectations SET last_status=?,last_run=CURRENT_TIMESTAMP WHERE id=?`,status,c.ExpectationID)}
-func(db *DB)ListResults(expID int64)([]CheckResult,error){rows,_:=db.Query(`SELECT id,expectation_id,passed,actual_value,message,ran_at FROM check_results WHERE expectation_id=? ORDER BY ran_at DESC LIMIT 50`,expID);defer rows.Close();var out[]CheckResult;for rows.Next(){var c CheckResult;var p int;rows.Scan(&c.ID,&c.ExpectationID,&p,&c.ActualValue,&c.Message,&c.RanAt);c.Passed=p==1;out=append(out,c)};return out,nil}
-func(db *DB)Delete(id int64){db.Exec(`DELETE FROM check_results WHERE expectation_id=?`,id);db.Exec(`DELETE FROM expectations WHERE id=?`,id)}
-func(db *DB)Stats()(map[string]interface{},error){var total,failing int;db.QueryRow(`SELECT COUNT(*) FROM expectations`).Scan(&total);db.QueryRow(`SELECT COUNT(*) FROM expectations WHERE last_status='fail'`).Scan(&failing);return map[string]interface{}{"expectations":total,"failing":failing},nil}
+import ("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
+type DB struct{db *sql.DB}
+type Item struct{
+	ID string `json:"id"`
+	Name string `json:"name"`
+	Description string `json:"description"`
+	Status string `json:"status"`
+	Category string `json:"category"`
+	Tags string `json:"tags"`
+	CreatedAt string `json:"created_at"`
+}
+func Open(d string)(*DB,error){if err:=os.MkdirAll(d,0755);err!=nil{return nil,err};db,err:=sql.Open("sqlite",filepath.Join(d,"dowser.db")+"?_journal_mode=WAL&_busy_timeout=5000");if err!=nil{return nil,err}
+db.Exec(`CREATE TABLE IF NOT EXISTS items(id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT DEFAULT '',status TEXT DEFAULT 'active',category TEXT DEFAULT '',tags TEXT DEFAULT '',created_at TEXT DEFAULT(datetime('now')))`)
+return &DB{db:db},nil}
+func(d *DB)Close()error{return d.db.Close()}
+func genID()string{return fmt.Sprintf("%d",time.Now().UnixNano())}
+func now()string{return time.Now().UTC().Format(time.RFC3339)}
+func(d *DB)Create(e *Item)error{e.ID=genID();e.CreatedAt=now();_,err:=d.db.Exec(`INSERT INTO items(id,name,description,status,category,tags,created_at)VALUES(?,?,?,?,?,?,?)`,e.ID,e.Name,e.Description,e.Status,e.Category,e.Tags,e.CreatedAt);return err}
+func(d *DB)Get(id string)*Item{var e Item;if d.db.QueryRow(`SELECT id,name,description,status,category,tags,created_at FROM items WHERE id=?`,id).Scan(&e.ID,&e.Name,&e.Description,&e.Status,&e.Category,&e.Tags,&e.CreatedAt)!=nil{return nil};return &e}
+func(d *DB)List()[]Item{rows,_:=d.db.Query(`SELECT id,name,description,status,category,tags,created_at FROM items ORDER BY created_at DESC`);if rows==nil{return nil};defer rows.Close();var o []Item;for rows.Next(){var e Item;rows.Scan(&e.ID,&e.Name,&e.Description,&e.Status,&e.Category,&e.Tags,&e.CreatedAt);o=append(o,e)};return o}
+func(d *DB)Delete(id string)error{_,err:=d.db.Exec(`DELETE FROM items WHERE id=?`,id);return err}
+func(d *DB)Count()int{var n int;d.db.QueryRow(`SELECT COUNT(*) FROM items`).Scan(&n);return n}
